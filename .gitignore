@@ -1,0 +1,8 @@
+# 依赖与敏感文件
+node_modules/
+.DS_Store
+WECOM_CONFIG_SECRET.txt
+
+# Python
+__pycache__/
+*.pyc
