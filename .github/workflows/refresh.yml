@@ -1,0 +1,67 @@
+name: Refresh Schedule
+
+# 定时刷新：每天北京时间 02:00（= UTC 18:00 前一天）自动拉取企业微信在线表并重新部署
+# 也可在 Actions 页面点 “Run workflow” 手动触发
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+# 允许工作流把构建产物发布到 GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wecom-cli
+        run: |
+          npm install -g @wecom/cli
+          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
+
+      - name: Restore wecom credentials
+        run: |
+          mkdir -p ~/.config/wecom
+          echo "${{ secrets.WECOM_CONFIG }}" | base64 -d | tar -xz -C ~
+          echo "凭证已还原，校验授权状态："
+          wecom-cli auth show --status
+          wecom-cli --version
+
+      - name: Fetch latest sheets
+        run: bash fetch_all_sheets.sh
+
+      - name: Build webapp
+        run: python3 build_webapp.py
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: webapp
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
