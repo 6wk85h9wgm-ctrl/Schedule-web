@@ -4,7 +4,7 @@
 import json
 import csv
 import io
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Sheet ID to teacher name mapping (8 teachers with current data)
 SHEET_MAP = {
@@ -422,7 +422,8 @@ embed_data = json.dumps({
 }, ensure_ascii=False)
 
 # Current timestamp for display
-refresh_time = datetime.now().strftime('%Y年%m月%d日 %H:%M')
+# 显示北京时间（CI 服务器为 UTC，需 +8）
+refresh_time = (datetime.utcnow() + timedelta(hours=8)).strftime('%Y年%m月%d日 %H:%M')
 
 html = f'''<!DOCTYPE html>
 <html lang="zh-CN">
@@ -752,7 +753,7 @@ select:disabled {{
     
     <div class="footer">
         <p>数据来源：总课程表在线表格</p>
-        <p id="dataUpdate">数据更新时间：{refresh_time}</p>
+        <p id="dataUpdate">数据更新时间（北京时间）：{refresh_time}</p>
     </div>
 </div>
 
