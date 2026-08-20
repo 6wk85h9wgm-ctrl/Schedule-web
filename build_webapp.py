@@ -4,6 +4,7 @@
 import json
 import csv
 import io
+import re
 from datetime import datetime, timedelta
 
 # Sheet ID to teacher name mapping (8 teachers with current data)
@@ -68,6 +69,66 @@ def parse_time_slot(time_str):
                         current += 30
                     return slots
     return []
+
+
+def slots_from_minutes(start_min, end_min):
+    """Map a minute range [start, end) to all half-hour slots it overlaps.
+    e.g. 14:50-15:50 overlaps slots 14:30, 15:00, 15:30."""
+    if end_min <= start_min:
+        end_min += 24 * 60  # overnight
+    first = (start_min // 30) * 30
+    last = ((end_min - 1) // 30) * 30
+    slots = []
+    current = first
+    while current <= last:
+        h = current // 60
+        m = current % 60
+        if h < 24:
+            slot = f"{h:02d}:{m:02d}"
+            if slot in TIME_SLOTS:
+                slots.append(slot)
+        current += 30
+    return slots
+
+
+# Explicit time ranges annotated inside cell content, e.g. "14:50-15:50", "16-17", "21.10-22.10"
+# Both sides must share the same format (minutes on both sides, or hour-only on both sides).
+_RANGE_WITH_MINUTES = re.compile(r'(?<!\d)(\d{1,2})[:：.](\d{1,2})\s*[-—~–]\s*(\d{1,2})[:：.](\d{1,2})(?!\d)')
+_RANGE_HOUR_ONLY = re.compile(r'(?<![\d.：:])(\d{1,2})\s*[-—~–]\s*(\d{1,2})(?![\d:.])')
+
+
+def extract_range_slots(text):
+    """Extract explicit time ranges annotated inside a cell's content
+    (e.g. '手表C班-7 14:50-15:50', 'Yvan17-18', 'vivien 21.10-22.10')
+    and return the half-hour slots they cover. Returns [] if none found."""
+    text = text.replace('：', ':')
+    found = []
+    for m in _RANGE_WITH_MINUTES.finditer(text):
+        try:
+            sh, sm, eh, em = int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4))
+        except ValueError:
+            continue
+        if sh > 23 or eh > 23 or sm > 59 or em > 59:
+            continue
+        found.extend(slots_from_minutes(sh * 60 + sm, eh * 60 + em))
+    for m in _RANGE_HOUR_ONLY.finditer(text):
+        try:
+            sh, eh = int(m.group(1)), int(m.group(2))
+        except ValueError:
+            continue
+        if sh > 23 or eh > 23:
+            continue
+        if not (0 < (eh - sh) % 24 <= 12):
+            continue
+        found.extend(slots_from_minutes(sh * 60, eh * 60))
+    # Deduplicate, keep slot order
+    seen = set()
+    result = []
+    for s in found:
+        if s not in seen:
+            seen.add(s)
+            result.append(s)
+    return result
 
 
 def parse_csv_content(content, teacher_name):
@@ -208,7 +269,17 @@ def parse_csv_content(content, teacher_name):
                         for slot in slots:
                             rest_entries.append((date_iso, slot))
                     else:
-                        for slot in slots:
+                        # The cell content may carry an explicit time annotation
+                        # (e.g. "手表C班-7 14:50-15:50" written in the 15:00-16:00 row,
+                        # "张涛17:40-18:40" in the 18:00-19:00 row) that starts earlier
+                        # than the row's own time range. Union the annotated range with
+                        # the row's slots so the overlapping half-hours before the row
+                        # are also marked busy.
+                        cell_slots = list(slots)
+                        for s in extract_range_slots(cell_content):
+                            if s not in cell_slots:
+                                cell_slots.append(s)
+                        for slot in cell_slots:
                             busy_entries.append((date_iso, slot, cell_content))
 
                     # Forward extension for merged "休息"/"假期" cells
